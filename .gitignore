@@ -1,0 +1,8 @@
+go-ceph-board
+go-ceph-board_*
+build/
+commit.sh
+config.yaml
+*.pem
+*.crt
+*.key

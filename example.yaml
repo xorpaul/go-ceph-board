@@ -1,0 +1,76 @@
+# Example configuration for go-ceph-board
+# Copy this file to config.yaml and modify as needed.
+
+# Server Configuration
+server:
+  # Bind address — empty means all interfaces (0.0.0.0)
+  address: ""
+  port: "8080"
+
+# TLS Configuration for Client Certificate Authentication
+# Set enabled: false to run in plain HTTP mode (e.g. during development)
+tls:
+  enabled: true
+  ca_file:   "/path/to/ca.crt"
+  cert_file: "/path/to/server.crt"
+  key_file:  "/path/to/server.key"
+  # Only clients whose certificate CN is in this list are allowed.
+  # Leave empty to allow any valid certificate.
+  allowed_cns:
+    - "admin"
+    - "john.doe"
+  # Optional links on the 401 (no certificate) and 403 (CN not allowed) pages:
+  # cert_help_url: "https://pki.example.com/"
+  # access_help_url: "https://tickets.example.com/new"
+
+# Ceph backend — the ceph-mgr Prometheus exporter (port 9283 by default)
+ceph:
+  # Single active-mgr URL (use mgr_prometheus_urls for failover across sites):
+  mgr_prometheus_url: "http://ceph-mon1.example.com:9283"
+
+  # Optional: multiple URLs tried in order — the first that returns HTTP 200 wins.
+  # Useful for stretch clusters where any mon may be active-mgr:
+  # mgr_prometheus_urls:
+  #   - "http://ceph-mon1.site1.example.com:9283"
+  #   - "http://ceph-mon2.site1.example.com:9283"
+  #   - "http://ceph-mon3.site1.example.com:9283"
+  #   - "http://ceph-mon1.site2.example.com:9283"
+  #   - "http://ceph-mon2.site2.example.com:9283"
+  #   - "http://ceph-mon3.site2.example.com:9283"
+
+  # Set true if the mgr Prometheus endpoint uses self-signed TLS
+  insecure_skip_verify: false
+
+  # Optional CA cert for the mgr endpoint if it uses custom TLS:
+  # ca_file: "/path/to/ceph-ca.crt"
+
+# Optional: sites for grouping and colouring hosts. The first entry whose
+# match is a substring of a hostname (or its CRUSH labels) wins; colours
+# default to a palette by position.
+# sites:
+#   - {match: "dc1", label: "DC1"}
+#   - {match: "dc2", label: "DC2", color: "#10b981"}
+
+# Optional: link next to every hostname; {host} is replaced by the hostname.
+# host_link:
+#   url: "https://cmdb.example.com/search?q={host}"
+#   title: "Search CMDB for"
+
+# Optional: dashboard metric thresholds.
+# Values below `warn` are shown green; between warn and crit amber; at/above crit red.
+# The same boundaries also draw colored background bands in the time-series charts.
+# All fields are optional — sensible defaults are used when omitted.
+thresholds:
+  usage_pct:       {warn: 70, crit: 85}   # cluster-wide used-storage %
+  mds_latency_ms:  {warn: 5, crit: 100}   # MDS request latency in milliseconds
+  prom_query_s:    {warn: 0.5, crit: 5}   # custom Prometheus query result in seconds
+  client_load:     {warn: 200, crit: 500} # client load (load5 from node_exporter)
+
+# Run without config file to disable TLS and use defaults:
+#   ./go-ceph-board
+#
+# Run with config file:
+#   ./go-ceph-board -config config.yaml
+#
+# Run with debug logging:
+#   ./go-ceph-board -config config.yaml -debug
