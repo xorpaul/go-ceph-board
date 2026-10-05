@@ -295,6 +295,21 @@ function buildDaemonStartTimeMap(nodeMetrics) {
     return map;
 }
 
+// buildDaemonRankStateMap returns ceph_daemon → normalized state from
+// ceph_mds_rank_assigned (textfile metric, via extra_hosts scrape).
+// The textfile uses the "up:" prefix (e.g. "up:active", "up:standby-replay");
+// we strip it so callers can compare against plain "active" / "standby-replay".
+function buildDaemonRankStateMap(nodeMetrics) {
+    const map = {};
+    for (const m of (nodeMetrics['ceph_mds_rank_assigned'] || [])) {
+        const daemon = m.labels.ceph_daemon;
+        const state  = m.labels.state;
+        if (!daemon || !state) continue;
+        map[daemon] = state.startsWith('up:') ? state.slice(3) : state;
+    }
+    return map;
+}
+
 function cpuColor(pct) {
     if (pct >= 90) return '#ef4444';
     if (pct >= 75) return '#f97316';

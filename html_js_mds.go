@@ -2,7 +2,8 @@ package main
 
 const htmlJSMDS = `
 
-function updateMDSDaemons(metrics) {
+function updateMDSDaemons(metrics, daemonRankStateMap) {
+    daemonRankStateMap = daemonRankStateMap || {};
     const tbody = document.getElementById('mdsDaemonTableBody');
     if (!tbody) return;
 
@@ -77,7 +78,10 @@ function updateMDSDaemons(metrics) {
         const hostname   = m.labels.hostname || m.labels.ceph_daemon;
         const cephDaemon = m.labels.ceph_daemon;
         const fsId       = m.labels.fs_id;
-        const state      = m.labels.state || '';
+        // Prefer authoritative state from ceph_mds_rank_assigned textfile metric
+        // (populated from "ceph fs dump" on misc/mon hosts via extra_hosts scrape).
+        // Falls back to ceph_mds_metadata.state, which is empty in cephadm clusters.
+        const state      = daemonRankStateMap[cephDaemon] || m.labels.state || '';
         const caps       = daemonCaps[cephDaemon] || 0;
         daemons.push({
             fsId,

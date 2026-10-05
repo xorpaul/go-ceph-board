@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.5.0 (2026-10-05)
+
+### Fixed
+- **MDS daemon role classification on idle cephadm clusters** — `ceph_mds_metadata.state` is always empty in cephadm deployments, so all MDS daemons were shown as "Standby / Passive" even when active or in standby-replay. The dashboard now reads `ceph_mds_rank_assigned` from the textfile metric emitted by `helper_scripts/ceph_mdsmap_textfile.sh` on misc/mon hosts (added to `extra_hosts` in config) and uses that as the authoritative state source. Falls back to the previous activity-based heuristic when the textfile helper is not deployed.
+
 ## v1.4.0 (2026-10-01)
 
 First public release. The README lists the full feature set: cluster health, PG/OSD/usage charts, pool, OSD host, monitor and MDS tables, MDS session map and rank-assignment tracking, multi-cluster switching, configurable Prometheus graphs, and TLS client-certificate auth.

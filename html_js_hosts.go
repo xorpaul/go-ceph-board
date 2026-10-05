@@ -1,8 +1,9 @@
 package main
 
 const htmlJSHosts = `
-function updateMDSHostsTop(metrics, hostMetricsMap, daemonStartTimeMap) {
-    daemonStartTimeMap = daemonStartTimeMap || {};
+function updateMDSHostsTop(metrics, hostMetricsMap, daemonStartTimeMap, daemonRankStateMap) {
+    daemonStartTimeMap  = daemonStartTimeMap  || {};
+    daemonRankStateMap  = daemonRankStateMap  || {};
     const tbody = document.getElementById('mdsHostsTopTableBody');
     if (!tbody) return;
 
@@ -18,13 +19,10 @@ function updateMDSHostsTop(metrics, hostMetricsMap, daemonStartTimeMap) {
     const mdsDaemonSessions = {};
     for (const m of (metrics['ceph_mds_sessions_session_count'] || [])) mdsDaemonSessions[m.labels.ceph_daemon] = m.value;
 
-    // ceph_mds_rank_assigned (textfile, admin1 nodes) carries authoritative state labels.
-    // Use it as the primary classification source; fall back to ceph_mds_metadata state.
-    const rankAssignedState = {};
-    for (const m of (metrics['ceph_mds_rank_assigned'] || [])) {
-        rankAssignedState[m.labels.ceph_daemon] = m.labels.state || '';
-    }
-    const hasRankAssigned = Object.keys(rankAssignedState).length > 0;
+    // daemonRankStateMap is pre-built from ceph_mds_rank_assigned in node-metrics
+    // (populated via extra_hosts scrape of misc/mon hosts running ceph_mdsmap_textfile.sh).
+    // Falls back to ceph_mds_metadata.state when the textfile is not deployed.
+    const hasRankAssigned = Object.keys(daemonRankStateMap).length > 0;
 
     const majVer = majorityVersion(metaArr);
     const topCanonMap = buildHostCanonMap(metaArr);
@@ -48,7 +46,7 @@ function updateMDSHostsTop(metrics, hostMetricsMap, daemonStartTimeMap) {
             mdsPerHost[hn].lastSvcDaemon = m.labels.ceph_daemon;
         }
         const effState = hasRankAssigned
-            ? (rankAssignedState[m.labels.ceph_daemon] || '')
+            ? (daemonRankStateMap[m.labels.ceph_daemon] || '')
             : (m.labels.state || '');
         if (effState.includes('standby-replay')) {
             mdsPerHost[hn].standbyReplay++;
@@ -164,8 +162,9 @@ function updateMDSHostsTop(metrics, hostMetricsMap, daemonStartTimeMap) {
 // ─── MDS Host Memory Breakdown Charts ────────────────────────────────────────
 const mdsMemCharts = {}; // hostname -> Chart instance
 
-function updateMDSMemCharts(metrics, hostMetricsMap, daemonMemMap) {
-    daemonMemMap = daemonMemMap || {};
+function updateMDSMemCharts(metrics, hostMetricsMap, daemonMemMap, daemonRankStateMap) {
+    daemonMemMap       = daemonMemMap       || {};
+    daemonRankStateMap = daemonRankStateMap || {};
     const grid = document.getElementById('mdsMemChartsGrid');
     if (!grid) return;
 
@@ -195,14 +194,10 @@ function updateMDSMemCharts(metrics, hostMetricsMap, daemonMemMap) {
     }
 
     // Classification priority:
-    // 1. ceph_mds_rank_assigned (textfile, admin1) — most reliable, has correct state label
+    // 1. daemonRankStateMap (from ceph_mds_rank_assigned in node-metrics, via extra_hosts) — most reliable
     // 2. ceph_mds_mem_cap — CAPS > 0 means active (serving clients)
     // 3. state label from ceph_mds_metadata — last resort, often empty/unreliable
-    const memRankAssignedState = {};
-    for (const m of (metrics['ceph_mds_rank_assigned'] || [])) {
-        memRankAssignedState[m.labels.ceph_daemon] = m.labels.state || '';
-    }
-    const hasMemRankAssigned = Object.keys(memRankAssignedState).length > 0;
+    const hasMemRankAssigned = Object.keys(daemonRankStateMap).length > 0;
 
     const daemonCaps = {};
     for (const m of (metrics['ceph_mds_mem_cap'] || [])) {
@@ -213,7 +208,7 @@ function updateMDSMemCharts(metrics, hostMetricsMap, daemonMemMap) {
     function classifyDaemon(daemon, meta) {
         if (meta.rank < 0) return 'standby';
         if (hasMemRankAssigned) {
-            const st = memRankAssignedState[daemon] || '';
+            const st = daemonRankStateMap[daemon] || '';
             return st.includes('standby-replay') ? 'standbyReplay' : 'active';
         }
         if (capsDataPresent) {

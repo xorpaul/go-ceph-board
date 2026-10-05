@@ -504,13 +504,14 @@ async function fetchAllData() {
         updatePGs(metrics);
         updateMonitors(metrics, hostMetricsMap);
         const rankAssignments = rankResult.status === 'fulfilled' ? rankResult.value : {};
+        const daemonRankStateMap = buildDaemonRankStateMap(nodeMetrics);
         updateMDS(metrics, daemonStartTimeMap, rankAssignments, daemonMemLimitMap, srLagMap, journalLiveMap, srPresentMap);
-        updateMDSDaemons(metrics);
+        updateMDSDaemons(metrics, daemonRankStateMap);
         updateMdsTrimChart(metrics);
         drawMDSSankey(metrics);
         updatePools(metrics);
-        updateMDSHostsTop(metrics, hostMetricsMap, daemonStartTimeMap);
-        updateMDSMemCharts(metrics, hostMetricsMap, daemonMemMap);
+        updateMDSHostsTop(metrics, hostMetricsMap, daemonStartTimeMap, daemonRankStateMap);
+        updateMDSMemCharts(metrics, hostMetricsMap, daemonMemMap, daemonRankStateMap);
         updateOSDHosts(metrics, hostMetricsMap, daemonStartTimeMap);
         updateCephVersionBadge(metrics);
 
