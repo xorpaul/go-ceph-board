@@ -221,8 +221,9 @@ function buildDaemonMemLimitMap(nodeMetrics) {
 }
 
 // buildSrLagMap returns {ceph_daemon (SR) -> {lag, margin}} from node metrics.
-// When both misc hosts report the same cluster, each series arrives twice;
-// keep the most conservative values: max lag, min margin.
+// Every scraped host running the script (misc + mon hosts) reports the same
+// cluster, so each series arrives once per host; keep the most conservative
+// values: max lag, min margin.
 function buildSrLagMap(nodeMetrics) {
     const map = {};
     for (const m of (nodeMetrics['ceph_mds_sr_lag_bytes'] || [])) {
@@ -237,11 +238,20 @@ function buildSrLagMap(nodeMetrics) {
         const e = map[k] || (map[k] = {});
         e.margin = e.margin === undefined ? m.value : Math.min(e.margin, m.value);
     }
+    // Drop trend history for daemons no longer reported (cephadm daemon names carry
+    // random suffixes, so redeploys would otherwise grow the history map forever).
+    // Skip when the family is absent (e.g. /node-metrics failed) to keep the trend.
+    if ((nodeMetrics['ceph_mds_sr_lag_bytes'] || []).length > 0) {
+        for (const k of Object.keys(mdsSrLagHistory)) {
+            if (!map[k]) delete mdsSrLagHistory[k];
+        }
+    }
     return map;
 }
 
 // buildJournalLiveMap returns {"fs_name/rank" -> bytes} for the untrimmed journal size.
-// Duplicates: take max (fresher active expos = smaller live; max = more conservative).
+// Duplicates (one series per scraping host, sampled a few seconds apart): take max,
+// which keeps the margin/live percentage on the conservative (lower) side.
 function buildJournalLiveMap(nodeMetrics) {
     const map = {};
     for (const m of (nodeMetrics['ceph_mds_journal_live_bytes'] || [])) {
@@ -299,12 +309,17 @@ function buildDaemonStartTimeMap(nodeMetrics) {
 // ceph_mds_rank_assigned (textfile metric, via extra_hosts scrape).
 // The textfile uses the "up:" prefix (e.g. "up:active", "up:standby-replay");
 // we strip it so callers can compare against plain "active" / "standby-replay".
+// The textfile's ceph_daemon is the bare daemon name from "ceph fs dump"
+// (e.g. "fs1.site2.mds1.edmmur"); key it in the mgr prometheus form
+// ("mds.fs1.site2.mds1.edmmur") so it matches d.cephDaemon / ceph_mds_metadata.
 function buildDaemonRankStateMap(nodeMetrics) {
     const map = {};
+    const uuidPrefix = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\./;
     for (const m of (nodeMetrics['ceph_mds_rank_assigned'] || [])) {
-        const daemon = m.labels.ceph_daemon;
-        const state  = m.labels.state;
-        if (!daemon || !state) continue;
+        const name  = (m.labels.ceph_daemon || '').replace(uuidPrefix, '');
+        const state = m.labels.state;
+        if (!name || !state) continue;
+        const daemon = name.startsWith('mds.') ? name : 'mds.' + name;
         map[daemon] = state.startsWith('up:') ? state.slice(3) : state;
     }
     return map;

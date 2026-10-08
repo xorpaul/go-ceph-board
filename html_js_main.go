@@ -505,7 +505,7 @@ async function fetchAllData() {
         updateMonitors(metrics, hostMetricsMap);
         const rankAssignments = rankResult.status === 'fulfilled' ? rankResult.value : {};
         const daemonRankStateMap = buildDaemonRankStateMap(nodeMetrics);
-        updateMDS(metrics, daemonStartTimeMap, rankAssignments, daemonMemLimitMap, srLagMap, journalLiveMap, srPresentMap);
+        updateMDS(metrics, daemonStartTimeMap, rankAssignments, daemonMemLimitMap, srLagMap, journalLiveMap, srPresentMap, daemonRankStateMap);
         updateMDSDaemons(metrics, daemonRankStateMap);
         updateMdsTrimChart(metrics);
         drawMDSSankey(metrics);

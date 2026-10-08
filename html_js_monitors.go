@@ -429,13 +429,14 @@ function _refreshMdsFsModal() {
     if (_mdsModalOpen && _mdsModalData[_mdsModalOpen]) openMdsFsModal(_mdsModalOpen);
 }
 
-function updateMDS(metrics, daemonStartTimeMap, rankAssignments, daemonMemLimitMap, srLagMap, journalLiveMap, srPresentMap) {
+function updateMDS(metrics, daemonStartTimeMap, rankAssignments, daemonMemLimitMap, srLagMap, journalLiveMap, srPresentMap, daemonRankStateMap) {
     daemonStartTimeMap = daemonStartTimeMap || {};
     rankAssignments    = rankAssignments    || {};
     daemonMemLimitMap  = daemonMemLimitMap  || {};
     srLagMap           = srLagMap           || {};
     journalLiveMap     = journalLiveMap     || {};
     srPresentMap       = srPresentMap       || {};
+    daemonRankStateMap = daemonRankStateMap || {};
     const metaArr   = metrics['ceph_mds_metadata'] || [];
     const fsMetaArr = metrics['ceph_fs_metadata']  || [];
     const tbody     = document.getElementById('mdsTableBody');
@@ -470,6 +471,16 @@ function updateMDS(metrics, daemonStartTimeMap, rankAssignments, daemonMemLimitM
     const daemonInodesExpired = {}; for (const m of (metrics['ceph_mds_inodes_expired'] || [])) daemonInodesExpired[m.labels.ceph_daemon] = m.value;
     const daemonCapThrottle  = {}; for (const m of (metrics['ceph_mds_server_cap_acquisition_throttle'] || [])) daemonCapThrottle[m.labels.ceph_daemon]  = m.value;
     const daemonCapEviction  = {}; for (const m of (metrics['ceph_mds_server_cap_revoke_eviction']     || [])) daemonCapEviction[m.labels.ceph_daemon]   = m.value;
+
+    // Active vs standby-replay for a rank-holding daemon. Prefer the authoritative
+    // state from ceph_mds_rank_assigned (any non-SR state, e.g. replay/rejoin during
+    // failover, holds the rank); fall back to CAPS > 0 when the textfile helper is
+    // not deployed. CAPS alone misclassifies idle active ranks as standby-replay.
+    const isActiveMds = d => {
+        const st = daemonRankStateMap[d.cephDaemon];
+        if (st) return st !== 'standby-replay';
+        return (daemonCaps[d.cephDaemon] || 0) > 0;
+    };
 
     // Sort daemons into active/standby-replay (rank ≥ 0) and standby (rank = -1)
     const activeByFs = {};   // fs_id → [{rank, hostname, site, cephDaemon, state}]
@@ -509,7 +520,7 @@ function updateMDS(metrics, daemonStartTimeMap, rankAssignments, daemonMemLimitM
     for (const fsId of fsIds) {
         const fsName   = fsNames[fsId] || ('FS #' + fsId);
         const active   = activeByFs[fsId].sort((a, b) => a.rank - b.rank);
-        const rank0    = active.find(a => (daemonCaps[a.cephDaemon] || 0) > 0 && a.rank === 0);
+        const rank0    = active.find(a => isActiveMds(a) && a.rank === 0);
         const fsc      = fsColor(fsId);
         let html       = '<span class="flex items-center gap-1.5 text-xs">';
         html          += '<span class="font-bold" style="color:' + fsc + '">' + fsName + '</span>';
@@ -521,7 +532,7 @@ function updateMDS(metrics, daemonStartTimeMap, rankAssignments, daemonMemLimitM
             html += '<span class="text-gray-400">—</span>';
         }
         // Show other active (non-replay) sites at a glance (without ★)
-        const otherSites = [...new Set(active.filter(a => (daemonCaps[a.cephDaemon] || 0) > 0 && a.rank !== 0).map(a => a.site))];
+        const otherSites = [...new Set(active.filter(a => isActiveMds(a) && a.rank !== 0).map(a => a.site))];
         for (const site of otherSites) {
             if (rank0 && site === rank0.site) continue;
             const sc = siteColor(site);
@@ -563,9 +574,9 @@ function updateMDS(metrics, daemonStartTimeMap, rankAssignments, daemonMemLimitM
             const fsName = fsNames[fsId] || ('FS #' + fsId);
             const fsc    = fsColor(fsId);
             const daemons = (activeByFs[fsId] || []).slice().sort((a, b) => {
-                // active (CAPS > 0) before standby-replay; within group by rank asc
-                const aReplay = (daemonCaps[a.cephDaemon] || 0) > 0 ? 0 : 1;
-                const bReplay = (daemonCaps[b.cephDaemon] || 0) > 0 ? 0 : 1;
+                // active before standby-replay; within group by rank asc
+                const aReplay = isActiveMds(a) ? 0 : 1;
+                const bReplay = isActiveMds(b) ? 0 : 1;
                 if (aReplay !== bReplay) return aReplay - bReplay;
                 return a.rank - b.rank;
             });
@@ -576,7 +587,7 @@ function updateMDS(metrics, daemonStartTimeMap, rankAssignments, daemonMemLimitM
             let totalJrnlLive = 0, hasJrnlLive = false;
             let totalMaxLag = undefined, smallestMargin = undefined, smallestMarginDaemon = null;
             for (const d of daemons) {
-                const isActive = (daemonCaps[d.cephDaemon] || 0) > 0;
+                const isActive = isActiveMds(d);
                 if (isActive) {
                     const r = calcMdsDaemonRates(d.cephDaemon, daemonSlowReply[d.cephDaemon] || 0, daemonRequest[d.cephDaemon] || 0);
                     if (r && r.reqRate >= 0.5) totalReqs += r.reqRate;
@@ -651,14 +662,14 @@ function updateMDS(metrics, daemonStartTimeMap, rankAssignments, daemonMemLimitM
                 '<td style="' + totRowSt + '" title="Total Mem across all daemons (active + standby-replay)">' + totalMemStr + '</td>' +
                 '<td style="' + totRowSt + '" title="Total trim rate across active daemons">' + totalTrimStr + '</td>' +
                 '<td style="' + totRowSt + '" title="Sum of active journal sizes">' + (hasJrnlLive ? formatBytes(totalJrnlLive) : '—') + '</td>' +
-                '<td style="' + totRowSt + '" title="Max SR lag' + (smallestMarginDaemon ? '; smallest margin: ' + smallestMarginDaemon.replace(/^mds\./, '') : '') + '">' + (totalMaxLag !== undefined ? formatBytes(totalMaxLag) : '—') + '</td>' +
+                '<td style="' + totRowSt + '" title="Max SR lag' + (smallestMarginDaemon ? '; smallest margin: ' + smallestMarginDaemon.replace(/^mds\./, '') + ' (' + (smallestMargin < 0 ? '-' : '') + formatBytes(Math.abs(smallestMargin)) + ')' : '') + '">' + (totalMaxLag !== undefined ? formatBytes(totalMaxLag) : '—') + '</td>' +
                 '<td></td>' +
                 '</tr>' +
                 '</thead><tbody>';
 
             let lastIsReplay = false;
             for (const d of daemons) {
-                const isReplay = (daemonCaps[d.cephDaemon] || 0) === 0;
+                const isReplay = !isActiveMds(d);
                 const rankLabel = isReplay ? d.rank + '-s' : String(d.rank);
                 const shortDaemon = d.cephDaemon.replace(/^mds\./, '');
                 const rates = isReplay ? null : calcMdsDaemonRates(d.cephDaemon, daemonSlowReply[d.cephDaemon] || 0, daemonRequest[d.cephDaemon] || 0);
@@ -752,7 +763,8 @@ function updateMDS(metrics, daemonStartTimeMap, rankAssignments, daemonMemLimitM
                         } else if (pct !== null) {
                             color = pct >= 50 ? '#22c55e' : pct >= 20 ? '#f97316' : '#ef4444';
                         } else {
-                            color = '#22c55e';
+                            // Live journal unknown: fall back to the absolute alert threshold.
+                            color = margin < 50e6 ? '#ef4444' : '#22c55e';
                         }
                         const absMargin = Math.abs(margin);
                         const prefix = margin < 0 ? '-' : '';
@@ -766,9 +778,10 @@ function updateMDS(metrics, daemonStartTimeMap, rankAssignments, daemonMemLimitM
                         if (lag === undefined) return '<span style="color:' + txtFaint + '">—</span>';
                         const growing = checkSrLagTrend(d.cephDaemon, lag);
                         let color;
-                        if ((growing && lag >= 1e6) || lag >= 10e6) {
+                        const MiB = 1024 * 1024; // formatBytes renders binary units
+                        if ((growing && lag >= MiB) || lag >= 10 * MiB) {
                             color = '#ef4444';
-                        } else if (lag >= 1e6) {
+                        } else if (lag >= MiB) {
                             color = '#eab308';
                         } else {
                             color = '#22c55e';
@@ -780,12 +793,11 @@ function updateMDS(metrics, daemonStartTimeMap, rankAssignments, daemonMemLimitM
             }
 
             // Emit "no standby-replay" placeholder rows for ranks confirmed SR-less by the script.
-            const srRanks = new Set(daemons.filter(d => (daemonCaps[d.cephDaemon] || 0) === 0).map(d => d.rank));
-            const activeRanksArr = daemons.filter(d => (daemonCaps[d.cephDaemon] || 0) > 0).map(d => d.rank).sort((a, b) => a - b);
-            for (const rank of activeRanksArr) {
+            const srRanks = new Set(daemons.filter(d => !isActiveMds(d)).map(d => d.rank));
+            const activeRanks = [...new Set(daemons.filter(isActiveMds).map(d => d.rank))].sort((a, b) => a - b);
+            for (const rank of activeRanks) {
                 if (srRanks.has(rank)) continue;
-                const presentKey = fsName + '/' + String(rank);
-                if (srPresentMap[presentKey] !== 0) continue;
+                if (srPresentMap[fsName + '/' + rank] !== 0) continue;
                 if (!lastIsReplay) {
                     tbl += '<tr><td colspan="15" style="padding:1px 4px;color:' + txtFaint + ';font-style:italic;border-top:1px dotted ' + sepBorder + '">standby-replay</td></tr>';
                     lastIsReplay = true;
@@ -799,7 +811,7 @@ function updateMDS(metrics, daemonStartTimeMap, rankAssignments, daemonMemLimitM
             tbl += '</tbody></table>';
 
             // Store for modal (live-update on next refresh)
-            const activeDaemonList = daemons.filter(d => (daemonCaps[d.cephDaemon] || 0) > 0).map(d => d.cephDaemon);
+            const activeDaemonList = daemons.filter(isActiveMds).map(d => d.cephDaemon);
             _mdsModalData[fsId] = { name: fsName, color: fsc, tblHtml: tbl, daemonList: activeDaemonList };
 
             const expandBtn =
