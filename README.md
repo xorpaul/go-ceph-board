@@ -54,6 +54,7 @@ Designed as a companion to [go-elastic-board](https://github.com/xorpaul/go-elas
 - **MDS Session Distribution (Sankey)** — flow diagram mapping CephFS filesystems to MDS host servers; band width proportional to session count; hover shows exact counts
 - Sessions column in MDS filesystem and MDS Hosts tables (from `ceph_mds_sessions_session_count`)
 - **MDS rank assignment tracking** — the "Since" column in the daemon detail grid shows the time a daemon took its rank (i.e. the last MDS failover for that rank slot), sourced from the `/rank-assignments` endpoint. Falls back to `ceph_daemon_start_time_seconds` (systemd service start) when rank assignment data is unavailable. Rows where "Since" is under 1 hour are highlighted red — a quick visual signal for recent failovers. Requires the `ceph_mdsmap_textfile.sh` textfile helper on an admin/mon host; see [MDS Rank Assignment Tracking](#mds-rank-assignment-tracking) below.
+- **Standby-replay journal lag** — `Jrnl` and `Lag` columns in the daemon detail grid show each active rank's untrimmed journal size and how far its standby-replay trails it, so an SR about to "fall behind journal" and respawn is visible before it happens. Ranks without a standby-replay get a placeholder row. Requires the `ceph_mds_sr_lag_textfile.py` helper; see [Standby-Replay Journal Lag](#standby-replay-journal-lag) below.
 
 ### Multi-Cluster Support
 - Named clusters under `ceph:` in the config (e.g. `EU:`, `US:`)
@@ -304,7 +305,7 @@ The script auto-detects the node_exporter textfile directory from the running no
 |--------|-------------|
 | `ceph_mds_rank_incarnation` | Incarnation counter per rank slot — the key signal for rank reassignment |
 | `ceph_mds_rank_state_seq` | State sequence number per rank slot |
-| `ceph_mds_rank_assigned` | 1 when the rank is assigned to a daemon, 0 for unassigned |
+| `ceph_mds_rank_assigned` | 1 when the rank is assigned to a daemon, 0 for unassigned; its `state` label is also the authoritative active / standby-replay classification for the MDS tables |
 | `ceph_mdsmap_epoch` | Current MDS map epoch |
 
 Run the script from cron or a systemd timer every few minutes. That host must be listed under `extra_hosts` in the go-ceph-board cluster config (see above) so its node_exporter output is included in the scrape fan-out.
@@ -326,6 +327,34 @@ Rank assignments are persisted to `rank_assignments.json` in the working directo
   }
 }
 ```
+
+## Standby-Replay Journal Lag
+
+A standby-replay (SR) MDS continuously replays the journal of the active rank it follows. If the active trims journal the SR has not read yet — because the SR cannot keep up, or because of an immediate trim such as `ceph tell mds.<fs>:<rank> flush journal` — the SR respawns with `respawning since we fell behind journal` and its replacement starts with a cold cache. The mgr Prometheus module does not export the journal byte positions needed to see this coming.
+
+### Deploying the textfile helper
+
+`helper_scripts/ceph_mds_sr_lag_textfile.py` reads the `mds_log` journal positions from `ceph tell mds.<name> perf dump mds_log` for every active and standby-replay daemon and writes `ceph_mds_sr_lag.prom` to the node_exporter textfile directory. It needs Python 3, the `ceph` CLI and the admin keyring (for `ceph tell`), so run it as root on a mon or admin host, ideally every minute from a systemd timer. That host must be listed under `extra_hosts` (see above). Running it on several hosts is fine; go-ceph-board de-duplicates the series conservatively.
+
+The textfile directory is detected the same way as for `ceph_mdsmap_textfile.sh` (plus the cephadm-managed node-exporter directory); override it with `CEPH_TEXTFILE_DIR`.
+
+| Metric | Description |
+|--------|-------------|
+| `ceph_mds_sr_lag_bytes` | SR `wrpos − rdpos`: journal written by the active but not yet replayed. A few KB is normal; steady growth means the SR cannot keep up |
+| `ceph_mds_sr_margin_bytes` | SR `rdpos` − active `expos`: how much further the SR can fall behind before the active trims journal it still needs. At ≤ 0 the SR respawns |
+| `ceph_mds_journal_live_bytes` | Active `wrpos − expos`: the untrimmed journal size |
+| `ceph_mds_sr_present` | 1 if the rank has a standby-replay daemon, 0 if not |
+
+### Dashboard columns
+
+In the per-filesystem daemon detail grid:
+
+- **Jrnl** — for an active rank, the untrimmed journal size. For an SR, its margin, coloured by percentage of the live journal (green ≥ 50 %, orange ≥ 20 %, red below 20 % or at ≤ 0). When the live journal size is unknown, a margin under 50 MB is red.
+- **Lag** — SR lag; green below 1 MiB, yellow from 1 MiB, red from 10 MiB, or from 1 MiB when it grew over the last three distinct samples.
+- The totals row shows the sum of active journal sizes and the largest SR lag; its tooltip names the SR with the smallest margin.
+- Ranks where `ceph_mds_sr_present` is 0 get a red `<rank>-s (no standby-replay)` row.
+
+Without the helper, both columns show `—`.
 
 ## Architecture
 
