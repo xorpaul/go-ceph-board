@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.5.2 (2026-10-12)
+
+### Added
+- **`name_label` for prom-graph panels** — new `PromGraphConfig` field. When set, only that metric label's value is used as the display name for each series instead of joining all non-`__name__` labels. Rows that share the same resolved name are deduplicated, keeping the highest value. Combine with `resolve_ptr: true` to collapse duplicate series from multiple Prometheus scrapers that reach the same node via different network interfaces (e.g. `node_load5` reported by both BS1 and BAP1 Prometheus for the same client node via its two bond IPs).
+- **MDS pending-requests badges** — `ceph_mds_pending_requests` is now fetched and surfaced as compact NR / NS badges in each filesystem card header. NR (no_request) counts requests not yet dispatched to any rank; NS (no_session) counts requests to an MDS with no open client session. Badges appear only when non-zero; amber at ≥1, red at ≥100.
+- **Relative journal-live colouring** — in the per-daemon MDS table, a live-journal value is highlighted orange if it is ≥3× the median active-rank value for that filesystem and ≥200 MiB, or red if ≥4 GiB unconditionally, making outlier ranks visible at a glance.
+
 ## v1.5.1 (2026-10-08)
 
 ### Fixed
