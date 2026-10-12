@@ -64,6 +64,7 @@ type PromGraphConfig struct {
 	Warn             *float64 `yaml:"warn"`
 	Crit             *float64 `yaml:"crit"`
 	ResolvePtr       bool     `yaml:"resolve_ptr"`
+	NameLabel        string   `yaml:"name_label"`
 	ProductionFilter bool     `yaml:"production_filter"`
 	FullWidth        bool     `yaml:"full_width"`
 	Unit             string   `yaml:"unit"`
@@ -273,6 +274,7 @@ var nodeMetricNames = map[string]bool{
 	"ceph_mds_sr_margin_bytes":          true,
 	"ceph_mds_journal_live_bytes":       true,
 	"ceph_mds_sr_present":               true,
+	"ceph_mds_pending_requests":         true,
 }
 
 // reNodeHostname extracts the hostname= label from ceph_osd_metadata /
@@ -860,19 +862,41 @@ func fetchPromGraph(st *clusterState, cfg PromGraphConfig) ([]byte, error) {
 		if err != nil || val < 0 {
 			continue
 		}
-		// Build a deterministic series name: sort label keys, drop __name__, join values with space.
-		keys := make([]string, 0, len(r.Metric))
-		for k := range r.Metric {
-			if k != "__name__" {
-				keys = append(keys, k)
+		// Build series name: when name_label is set use only that label; otherwise
+		// sort all non-__name__ label keys and join values with a space.
+		var name string
+		if cfg.NameLabel != "" {
+			name = r.Metric[cfg.NameLabel]
+			if name == "" {
+				// fall back to joined labels when the configured label is absent
+				keys := make([]string, 0, len(r.Metric))
+				for k := range r.Metric {
+					if k != "__name__" {
+						keys = append(keys, k)
+					}
+				}
+				sort.Strings(keys)
+				parts := make([]string, len(keys))
+				for i, k := range keys {
+					parts[i] = r.Metric[k]
+				}
+				name = strings.Join(parts, " ")
 			}
+		} else {
+			keys := make([]string, 0, len(r.Metric))
+			for k := range r.Metric {
+				if k != "__name__" {
+					keys = append(keys, k)
+				}
+			}
+			sort.Strings(keys)
+			parts := make([]string, len(keys))
+			for i, k := range keys {
+				parts[i] = r.Metric[k]
+			}
+			name = strings.Join(parts, " ")
 		}
-		sort.Strings(keys)
-		parts := make([]string, len(keys))
-		for i, k := range keys {
-			parts[i] = r.Metric[k]
-		}
-		rows = append(rows, promGraphRow{Name: strings.Join(parts, " "), Value: val})
+		rows = append(rows, promGraphRow{Name: name, Value: val})
 	}
 	if len(rows) == 0 {
 		return []byte("[]"), nil
@@ -880,6 +904,21 @@ func fetchPromGraph(st *clusterState, cfg PromGraphConfig) ([]byte, error) {
 
 	// Sort by value descending (worst-first).
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Value > rows[j].Value })
+
+	// Deduplicate by name when name_label is set (multiple scrapers may return the
+	// same logical host under the same label value). Keep the highest value (already
+	// first after the sort above).
+	if cfg.NameLabel != "" {
+		seen := make(map[string]struct{}, len(rows))
+		deduped := rows[:0]
+		for _, r := range rows {
+			if _, ok := seen[r.Name]; !ok {
+				seen[r.Name] = struct{}{}
+				deduped = append(deduped, r)
+			}
+		}
+		rows = deduped
+	}
 
 	// Truncate to max_entries if configured.
 	if cfg.MaxEntries > 0 && len(rows) > cfg.MaxEntries {

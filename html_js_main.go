@@ -464,6 +464,7 @@ async function fetchAllData() {
         const srLagMap           = buildSrLagMap(nodeMetrics);
         const journalLiveMap     = buildJournalLiveMap(nodeMetrics);
         const srPresentMap       = buildSrPresentMap(nodeMetrics);
+        const pendingMap         = buildPendingMap(nodeMetrics);
 
         myGraphs.forEach((g, i) => {
             updateDynGraph(g.id, graphResults[i].status === 'fulfilled' ? graphResults[i].value : null, g);
@@ -505,7 +506,7 @@ async function fetchAllData() {
         updateMonitors(metrics, hostMetricsMap);
         const rankAssignments = rankResult.status === 'fulfilled' ? rankResult.value : {};
         const daemonRankStateMap = buildDaemonRankStateMap(nodeMetrics);
-        updateMDS(metrics, daemonStartTimeMap, rankAssignments, daemonMemLimitMap, srLagMap, journalLiveMap, srPresentMap, daemonRankStateMap);
+        updateMDS(metrics, daemonStartTimeMap, rankAssignments, daemonMemLimitMap, srLagMap, journalLiveMap, srPresentMap, daemonRankStateMap, pendingMap);
         updateMDSDaemons(metrics, daemonRankStateMap);
         updateMdsTrimChart(metrics);
         drawMDSSankey(metrics);

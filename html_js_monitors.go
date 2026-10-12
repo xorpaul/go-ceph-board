@@ -429,7 +429,7 @@ function _refreshMdsFsModal() {
     if (_mdsModalOpen && _mdsModalData[_mdsModalOpen]) openMdsFsModal(_mdsModalOpen);
 }
 
-function updateMDS(metrics, daemonStartTimeMap, rankAssignments, daemonMemLimitMap, srLagMap, journalLiveMap, srPresentMap, daemonRankStateMap) {
+function updateMDS(metrics, daemonStartTimeMap, rankAssignments, daemonMemLimitMap, srLagMap, journalLiveMap, srPresentMap, daemonRankStateMap, pendingMap) {
     daemonStartTimeMap = daemonStartTimeMap || {};
     rankAssignments    = rankAssignments    || {};
     daemonMemLimitMap  = daemonMemLimitMap  || {};
@@ -437,6 +437,7 @@ function updateMDS(metrics, daemonStartTimeMap, rankAssignments, daemonMemLimitM
     journalLiveMap     = journalLiveMap     || {};
     srPresentMap       = srPresentMap       || {};
     daemonRankStateMap = daemonRankStateMap || {};
+    pendingMap         = pendingMap         || {};
     const metaArr   = metrics['ceph_mds_metadata'] || [];
     const fsMetaArr = metrics['ceph_fs_metadata']  || [];
     const tbody     = document.getElementById('mdsTableBody');
@@ -629,6 +630,23 @@ function updateMDS(metrics, daemonStartTimeMap, rankAssignments, daemonMemLimitM
             const totalMemStr = hasMem ? formatBytes(totalMem) : '—';
             const totRowSt = 'padding:1px 4px;text-align:right;font-family:monospace;font-weight:600;color:' + txtStat;
 
+            // Pre-collect active journal sizes for relative coloring within this FS
+            const activeJrnlSizes = [];
+            for (const d of daemons) {
+                if (!isActiveMds(d)) continue;
+                const live = journalLiveMap[fsName + '/' + d.rank];
+                if (live !== undefined) activeJrnlSizes.push(live);
+            }
+            activeJrnlSizes.sort((a, b) => a - b);
+            const jrnlMedian = activeJrnlSizes.length > 0 ? activeJrnlSizes[Math.floor(activeJrnlSizes.length / 2)] : 0;
+            const jrnlColorFor = bytes => {
+                const GiB = 1073741824;
+                const isLargeRelative = activeJrnlSizes.length > 1 && jrnlMedian > 0 && bytes >= 3 * jrnlMedian && bytes >= 200 * 1024 * 1024;
+                if (bytes >= 4 * GiB || (isLargeRelative && bytes >= GiB)) return '#ef4444';
+                if (bytes >= 2 * GiB || isLargeRelative) return '#f97316';
+                return null;
+            };
+
             let tbl = '<table style="font-size:10px;border-collapse:collapse;white-space:nowrap">' +
                 '<thead>' +
                 '<tr style="color:' + thTxt + ';border-bottom:1px solid ' + headBorder + '">' +
@@ -750,7 +768,9 @@ function updateMDS(metrics, daemonStartTimeMap, rankAssignments, daemonMemLimitM
                         if (!isReplay) {
                             const live = journalLiveMap[fsName + '/' + d.rank];
                             if (live === undefined) return '<span style="color:' + txtFaint + '">—</span>';
-                            return '<span style="color:' + txtStat + '">' + formatBytes(live) + '</span>';
+                            const jc = jrnlColorFor(live);
+                            const style = jc ? 'color:' + jc + ';font-weight:600' : 'color:' + txtStat;
+                            return '<span style="' + style + '">' + formatBytes(live) + '</span>';
                         }
                         const srEntry = srLagMap[d.cephDaemon];
                         const margin = srEntry ? srEntry.margin : undefined;
@@ -819,9 +839,21 @@ function updateMDS(metrics, daemonStartTimeMap, rankAssignments, daemonMemLimitM
                 'title="Open fullscreen" ' +
                 'style="padding:1px 5px;border-radius:4px;border:1px solid ' + fsc + ';background:transparent;color:' + fsc + ';cursor:pointer;font-size:10px;line-height:1.4;flex-shrink:0">⛶</button>';
 
+            const pending = pendingMap[fsName] || {};
+            let pendingBadges = '';
+            if (pending.nr > 0) {
+                const nrColor = pending.nr >= 100 ? '#ef4444' : '#f97316';
+                pendingBadges += '<span style="font-size:9px;font-family:monospace;font-weight:700;color:' + nrColor + ';background:' + nrColor + '22;border-radius:3px;padding:0 3px" title="Pending requests not yet assigned to any MDS rank (mds=no_request). Non-zero means clients are waiting for MDS dispatch.">NR:' + Math.round(pending.nr).toLocaleString() + '</span>';
+            }
+            if (pending.ns > 0) {
+                const nsColor = pending.ns >= 100 ? '#ef4444' : '#f97316';
+                pendingBadges += '<span style="font-size:9px;font-family:monospace;font-weight:700;color:' + nsColor + ';background:' + nsColor + '22;border-radius:3px;padding:0 3px" title="Pending requests to an MDS with no open session (mds=no_session). Non-zero may indicate a session establishment delay or MDS overload.">NS:' + Math.round(pending.ns).toLocaleString() + '</span>';
+            }
+
             gridHtml += '<div style="border:1px solid ' + cardBorder + ';border-radius:6px;padding:4px 6px;min-width:0">' +
                 '<div style="display:flex;align-items:center;gap:4px;margin-bottom:2px">' +
                 '<span style="font-size:11px;font-weight:700;color:' + fsc + ';flex:1">' + fsName + '</span>' +
+                pendingBadges +
                 expandBtn +
                 '</div>' +
                 tbl + '</div>';

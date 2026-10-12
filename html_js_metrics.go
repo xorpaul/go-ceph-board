@@ -274,6 +274,30 @@ function buildSrPresentMap(nodeMetrics) {
     return map;
 }
 
+// buildPendingMap returns {fsName -> {nr: N, ns: N}} summing ceph_mds_pending_requests
+// over all op= values for the mds="no_request" and mds="no_session" pseudo-ranks.
+// Multiple scraping hosts may report the same series; take max to avoid double-counting.
+function buildPendingMap(nodeMetrics) {
+    const seen = {}; // instance+fsName+mds+op -> value (dedup across scraping hosts)
+    for (const m of (nodeMetrics['ceph_mds_pending_requests'] || [])) {
+        const fsName = m.labels.name;
+        const mds    = m.labels.mds;
+        if (!fsName || (mds !== 'no_request' && mds !== 'no_session')) continue;
+        const op  = m.labels.op || '';
+        const inst = m.labels.instance || '';
+        const key = inst + '|' + fsName + '|' + mds + '|' + op;
+        seen[key] = seen[key] === undefined ? m.value : Math.max(seen[key], m.value);
+    }
+    const map = {};
+    for (const [key, val] of Object.entries(seen)) {
+        const [, fsName, mds] = key.split('|');
+        if (!map[fsName]) map[fsName] = { nr: 0, ns: 0 };
+        if (mds === 'no_request') map[fsName].nr += val;
+        else                      map[fsName].ns += val;
+    }
+    return map;
+}
+
 // ─── SR lag trend tracking ────────────────────────────────────────────────────
 // Tracks distinct lag samples per daemon (only pushed when value changes).
 // Returns true when the lag grew in each of the last 3 distinct changes.
