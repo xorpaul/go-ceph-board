@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.5.3 (2026-10-13)
+
+### Fixed
+- **Remove incident reference** - removed from MDS Daemon table in SLOW/S info hover text
+
+### Added
+- **Updated vendor** - updated vendor libs
+
 ## v1.5.2 (2026-10-12)
 
 ### Added
